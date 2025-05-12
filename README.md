@@ -15,10 +15,6 @@ It's designed for quick, local voice dictation without relying on cloud services
 *   **Cross-Platform Core:** Built with Rust, aiming for cross-platform compatibility (primarily tested on Windows). Hotkey listening uses `device_query`.
 *   **Logging:** Detailed logs are saved to `app.log` using `log4rs`.
 
-## Demo
-
-(Consider adding a short GIF/video here showing the app in action)
-
 ## Prerequisites
 
 1.  **Rust Toolchain:** Install Rust from [rustup.rs](https://rustup.rs/).
