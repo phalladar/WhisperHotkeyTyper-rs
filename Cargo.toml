@@ -1,0 +1,49 @@
+[package]
+name = "whisper-rust-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# GUI
+eframe = "0.27.2"
+egui_plot = "0.27.2" # For visualization
+
+# Whisper (with CUDA GPU acceleration)
+# Ensure this feature name is correct for the whisper-rs version you are using.
+# For 0.11.x, "cuda" is generally correct.
+# whisper-rs = { git = "https://github.com/tazz4843/whisper-rs.git", features = ["cuda", "cublas"] }
+whisper-rs = { version = "0.14.2", features = ["cuda"] } # Use specific version and standard cuda feature
+
+# Audio Input
+cpal = "0.15"
+crossbeam-channel = "0.5"
+rubato = "0.14.1" # For resampling audio
+# Removed hound dependency
+
+# Hotkeys
+# global-hotkey = "0.5.0" # Removed
+# Ensure windows crate features are compatible and sufficient.
+# This combination should work for global-hotkey's needs.
+windows = { version = "0.56.0", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader", # Potentially useful for CUDA DLL loading, though whisper-rs should handle it
+]}
+
+# Utilities
+log = "0.4"
+env_logger = "0.11.3"
+directories = "5.0.1" # For finding model paths potentially
+chrono = "0.4.38" # For timestamps if needed
+num_cpus = "1.16.0" # For setting thread counts
+
+# Input Simulation
+enigo = "0.2.0"
+log4rs = "1.2.0"
+
+device_query = "2.1.0" # Added
+
+[build-dependencies]
+embed-resource = "2.4"
+
+[package.metadata.bundle]
