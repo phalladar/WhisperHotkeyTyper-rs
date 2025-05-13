@@ -4,15 +4,11 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::thread;
 use std::path::PathBuf;
-use std::time::Duration; // For sleep
+use std::time::Duration;
 
-// Removed global-hotkey imports
-// use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Code}, HotKeyState, GlobalHotKeyEvent};
-// Added device_query imports
 use device_query::{DeviceQuery, DeviceState, Keycode};
 
 use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
-// Corrected import: WhisperContextParameters
 use whisper_rs::{WhisperContext, FullParams, SamplingStrategy, WhisperContextParameters};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction}; // For resampling
 use enigo::{Enigo, Settings, Keyboard}; // Added for typing output
@@ -24,7 +20,6 @@ use log4rs::encode::pattern::PatternEncoder;
 // --- Messages for thread communication ---
 #[derive(Debug)]
 enum AppMessage {
-    // ToggleRecording, // Removed dead code
     TranscriptionResult(String),
     StatusUpdate(String),
     AudioData(Vec<f32>),
@@ -34,12 +29,10 @@ enum AppMessage {
 struct WhisperApp {
     status: String,
     transcribed_text: String,
-    is_recording: bool, // Still useful for quick UI feedback, updated by messages
+    is_recording: bool, 
     model_path: PathBuf,
     rx_from_others: Receiver<AppMessage>,
     audio_control_tx: Arc<Mutex<Option<Sender<AudioControlMessage>>>>,
-    // Removed hotkey manager field
-    // _hotkey_manager: Option<GlobalHotKeyManager>,
 }
 
 #[derive(Debug)]
@@ -50,11 +43,8 @@ enum AudioControlMessage {
 
 
 impl WhisperApp {
-    // Removed hotkey manager creation from new()
     fn new(cc: &eframe::CreationContext<'_>, model_path: PathBuf, rx_from_others: Receiver<AppMessage>, audio_control_tx: Arc<Mutex<Option<Sender<AudioControlMessage>>>>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
-
-        // Removed hotkey manager creation/registration logic
 
         Self {
             status: "Idle. Press and hold F3 to record.".to_string(),
@@ -63,7 +53,6 @@ impl WhisperApp {
             model_path,
             rx_from_others,
             audio_control_tx,
-            // Removed _hotkey_manager assignment
         }
     }
 
@@ -71,21 +60,19 @@ impl WhisperApp {
         while let Ok(msg) = self.rx_from_others.try_recv() {
             log::debug!("GUI received message: {:?}", msg);
             match msg {
-                // AppMessage::ToggleRecording => { /* No longer used */ }
                 AppMessage::TranscriptionResult(text) => {
                     self.transcribed_text = text;
                     self.status = "Transcription complete. Press and hold F3 to record again.".to_string();
-                    self.is_recording = false; // Driven by messages now
+                    self.is_recording = false; 
                 }
                 AppMessage::StatusUpdate(status) => {
-                    // Update is_recording purely based on messages from background threads
                     if status.contains("Recording...") {
                         self.is_recording = true;
-                         self.transcribed_text = "".to_string(); // Clear text on new recording start
+                         self.transcribed_text = "".to_string(); 
                     } else if status.contains("Processing...") || status.contains("Idle") || status.contains("Error") || status.contains("complete") || status.contains("Ready") {
                         self.is_recording = false;
                     }
-                    self.status = status; // Always update the displayed status
+                    self.status = status; 
                 }
                 AppMessage::AudioData(_) => {
                     log::warn!("GUI received unexpected AudioData message");
@@ -93,22 +80,17 @@ impl WhisperApp {
             }
         }
     }
-
-    // toggle_recording_state method was already removed
 }
 
 impl eframe::App for WhisperApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_messages();
 
-        // Removed all hotkey checking logic from update loop
-
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Whisper Rust CUDA App");
             ui.separator();
             ui.label(format!("Model: {}", self.model_path.file_name().unwrap_or_default().to_string_lossy()));
 
-            // Show status and a spinner if transcribing or recording
             ui.horizontal(|ui| {
                 ui.label(format!("Status: {}", self.status));
                 if self.is_recording || self.status.contains("Transcribing...") || self.status.contains("Processing...") {
@@ -122,7 +104,7 @@ impl eframe::App for WhisperApp {
                 ui.label(self.transcribed_text.as_str());
             });
         });
-        ctx.request_repaint_after(std::time::Duration::from_millis(50)); // Check for messages periodically
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
 }
 
@@ -131,17 +113,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_path = "app.log";
     // Log pattern: Date/Time [Level] [Target] Message
     let encoder = PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} [{l}] [{t}] - {m}{n}");
-    // File appender configuration
     let file_appender = FileAppender::builder()
         .encoder(Box::new(encoder))
         .build(log_path)
         .expect("Failed to build file appender.");
-    // Logging configuration
     let config = Config::builder()
         .appender(Appender::builder().build("file", Box::new(file_appender)))
         .build(Root::builder().appender("file").build(LevelFilter::Info)) // Set default log level (e.g., Info)
         .expect("Failed to build log config.");
-    // Initialize logger
     log4rs::init_config(config).expect("Failed to initialize logger.");
 
     log::info!("--- Application Starting ---"); // Add a start marker
@@ -172,12 +151,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::Builder::new().name("whisper_thread".into()).spawn(move || {
         log::info!("Whisper thread started. Attempting to load model: {}", whisper_model_path_clone.display());
 
-        // Corrected type name: WhisperContextParameters
         let context_params = WhisperContextParameters::default();
-        // Check the default and log it
         log::info!("Attempting to load model with GPU support (use_gpu: {} by default from params)", context_params.use_gpu);
 
-        // Corrected type name: WhisperContextParameters
         let context = match WhisperContext::new_with_params(&whisper_model_path_clone.to_string_lossy(), context_params) {
             Ok(ctx) => {
                 log::info!("Whisper model loaded. Check console/stderr for whisper.cpp messages about GPU usage.");
@@ -262,10 +238,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Spawn Audio Recording Thread ---
     let tx_main_audio_clone = tx_main_thread.clone();
     let audio_capture_buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-    // Clone channels needed for the audio thread
-    let rx_audio_control_clone = rx_audio_control; // Give ownership to audio thread
-    let tx_audio_data_to_whisper_clone = tx_audio_data_to_whisper; // Give ownership to audio thread
-    // Removed mutable stream option from here, it's managed entirely within the thread loop now.
+    let rx_audio_control_clone = rx_audio_control;
+    let tx_audio_data_to_whisper_clone = tx_audio_data_to_whisper; 
     thread::Builder::new().name("audio_thread".into()).spawn(move || {
         // Use the cloned channels inside the audio thread
         let rx_audio_control = rx_audio_control_clone;
@@ -303,7 +277,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             available_configs.push(cfg_range);
         }
         
-        // --- Attempt to find a 48kHz Stereo i16 config --- 
         let desired_sr = cpal::SampleRate(48000);
         let chosen_config_range = available_configs.into_iter()
             .find(|config| {
@@ -315,11 +288,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let config = match chosen_config_range {
             Some(config_range) => {
-                log::info!("Using supported 48kHz Mono i16 config: {:?}", config_range); // <-- Update log message
+                log::info!("Using supported 48kHz Mono i16 config: {:?}", config_range);
                 config_range.with_sample_rate(desired_sr).config()
             }
             None => {
-                log::error!("No supported 48kHz Mono i16 config found. Please check logs."); // <-- Update log message
+                log::error!("No supported 48kHz Mono i16 config found. Please check logs.");
                 let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Error: No suitable i16 audio config.".to_string()));
                 return; 
             }
@@ -329,7 +302,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  config.channels, config.sample_rate.0, config.buffer_size);
 
         let mut audio_stream_opt: Option<cpal::Stream> = None;
-        let err_fn_arc = Arc::new(tx_main_audio_clone.clone()); // Clone for err_fn lifetime
+        let err_fn_arc = Arc::new(tx_main_audio_clone.clone());
 
         loop {
             match rx_audio_control.recv() {
@@ -349,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let err_fn_capture = Arc::clone(&err_fn_arc); 
 
                     let input_stream = match device.build_input_stream(
-                        &config, // Should be i16 Stereo 48kHz if found
+                        &config, 
                         move |data: &[i16], _: &cpal::InputCallbackInfo| {
                             if data.is_empty() {
                                 log::debug!("Audio callback: Received empty buffer");
@@ -418,18 +391,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let sinc_len = 256;
                             let params = SincInterpolationParameters {
                                 sinc_len,
-                                f_cutoff: 0.95, // Standard cutoff
-                                interpolation: SincInterpolationType::Linear, // Or Cubic, or Nearest
+                                f_cutoff: 0.95,
+                                interpolation: SincInterpolationType::Linear,
                                 oversampling_factor: 256, // High quality
-                                window: WindowFunction::BlackmanHarris2, // Good general purpose
+                                window: WindowFunction::BlackmanHarris2, 
                             };
                             // Create resampler (fixed number of input channels, mono)
                             let mut resampler = SincFixedIn::<f32>::new(
-                                output_sr / input_sr, // conversion ratio
-                                2.0,                  // max_resample_ratio_relative (for dynamic changes, not used here)
+                                output_sr / input_sr, 
+                                2.0,                  
                                 params,
-                                mono_48k_data.len(),  // chunk_size (process all at once for simplicity)
-                                1,                    // num_channels (mono)
+                                mono_48k_data.len(),  
+                                1, 
                             ).expect("Failed to create resampler");
 
                             // Prepare input for resampler (Vec<Vec<f32>>)
@@ -484,17 +457,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let keys = device_state.query_keymap();
             let f3_pressed = keys.contains(&Keycode::F3);
 
-            // Check for state change
             if f3_pressed && !last_f3_pressed {
-                // F3 Press Detected
                 log::info!("DeviceQuery: F3 Pressed");
-                // Send Start command to audio thread
                 if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
                      if let Err(e) = tx.send(AudioControlMessage::StartRecording) {
                          log::error!("DeviceQuery Hotkey thread: Failed to send StartRecording: {}", e);
                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
                      } else {
-                         // Send status update to main thread AFTER successfully sending command
                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Recording...".to_string()));
                      }
                  } else {
@@ -503,34 +472,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  }
 
             } else if !f3_pressed && last_f3_pressed {
-                // F3 Release Detected
                 log::info!("DeviceQuery: F3 Released");
-                 // Send Stop command to audio thread
                  if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
                      if let Err(e) = tx.send(AudioControlMessage::StopAndProcess) {
                          log::error!("DeviceQuery Hotkey thread: Failed to send StopAndProcess: {}", e);
                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error sending stop command.".to_string()));
-                     } else {
-                          // Send status update to main thread AFTER successfully sending command
-                          // Let the audio/whisper thread report "Processing...", don't send it from here.
-                         // let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Processing...".to_string()));
-                     }
+                     } 
                  } else {
                       log::error!("DeviceQuery Hotkey thread: Audio control channel unavailable for StopAndProcess.");
                       let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
                  }
             }
 
-            // Update last state
             last_f3_pressed = f3_pressed;
 
-            // Prevent busy-waiting
             thread::sleep(Duration::from_millis(50)); // Check ~20 times per second
         }
-        // Note: This loop runs forever in this basic implementation.
-        // A more robust solution might listen for a shutdown signal.
-        // log::info!("DeviceQuery Hotkey thread finished."); // This line might not be reached
     })?;
 
     log::info!("Starting GUI...");
