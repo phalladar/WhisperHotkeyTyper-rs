@@ -47,7 +47,7 @@ impl WhisperApp {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         Self {
-            status: "Idle. Press and hold F3 to record.".to_string(),
+            status: "Idle. Press and hold Left Ctrl + Left Alt + S to record.".to_string(),
             transcribed_text: "".to_string(),
             is_recording: false,
             model_path,
@@ -62,7 +62,7 @@ impl WhisperApp {
             match msg {
                 AppMessage::TranscriptionResult(text) => {
                     self.transcribed_text = text;
-                    self.status = "Transcription complete. Press and hold F3 to record again.".to_string();
+                    self.status = "Transcription complete. Press and hold Left Ctrl + Left Alt + S to record again.".to_string();
                     self.is_recording = false; 
                 }
                 AppMessage::StatusUpdate(status) => {
@@ -434,7 +434,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         log::warn!("Stop signal received but no active stream found.");
                          let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Ready. (No stream was active)".to_string()));
                     }
-                     let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Processing... Complete. Ready for next F3.".to_string())); // Updated status
+                     let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Processing... Complete. Ready for next Left Ctrl + Left Alt + S.".to_string())); // Updated status
                 }
                 Err(_) => {
                     log::info!("Audio control channel closed. Exiting audio thread.");
@@ -451,14 +451,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::Builder::new().name("hotkey_thread".into()).spawn(move || {
         log::info!("DeviceQuery Hotkey thread started.");
         let device_state = DeviceState::new();
-        let mut last_f3_pressed = false;
+        let mut last_hotkey_pressed = false;
 
         loop {
             let keys = device_state.query_keymap();
-            let f3_pressed = keys.contains(&Keycode::F3);
+            let lctrl_pressed = keys.contains(&Keycode::LControl);
+            let lalt_pressed = keys.contains(&Keycode::LAlt);
+            let s_pressed = keys.contains(&Keycode::S);
+            let hotkey_pressed = lctrl_pressed && lalt_pressed && s_pressed;
 
-            if f3_pressed && !last_f3_pressed {
-                log::info!("DeviceQuery: F3 Pressed");
+            if hotkey_pressed && !last_hotkey_pressed {
+                log::info!("DeviceQuery: Left Ctrl + Left Alt + S Pressed");
                 if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
                      if let Err(e) = tx.send(AudioControlMessage::StartRecording) {
                          log::error!("DeviceQuery Hotkey thread: Failed to send StartRecording: {}", e);
@@ -471,8 +474,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                       let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
                  }
 
-            } else if !f3_pressed && last_f3_pressed {
-                log::info!("DeviceQuery: F3 Released");
+            } else if !hotkey_pressed && last_hotkey_pressed {
+                log::info!("DeviceQuery: Left Ctrl + Left Alt + S Released");
                  if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
                      if let Err(e) = tx.send(AudioControlMessage::StopAndProcess) {
                          log::error!("DeviceQuery Hotkey thread: Failed to send StopAndProcess: {}", e);
@@ -485,7 +488,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                  }
             }
 
-            last_f3_pressed = f3_pressed;
+            last_hotkey_pressed = hotkey_pressed;
 
             thread::sleep(Duration::from_millis(50)); // Check ~20 times per second
         }

@@ -1,12 +1,12 @@
 # WhisperHotkeyTyper-rs
 
-**WhisperHotkeyTyper-rs** is a Rust desktop application that provides "push-to-talk" voice transcription using OpenAI's Whisper model (via `whisper.cpp`). Press and hold a hotkey (F3 by default) to record your voice, and upon release, the app transcribes the audio and types the result into your currently active window.
+**WhisperHotkeyTyper-rs** is a Rust desktop application that provides "push-to-talk" voice transcription using OpenAI's Whisper model (via `whisper.cpp`). Press and hold a hotkey (Left Ctrl + Left Alt + S by default) to record your voice, and upon release, the app transcribes the audio and types the result into your currently active window.
 
 It's designed for quick, local voice dictation without relying on cloud services.
 
 ## Features
+*   **Push-to-Talk Transcription:** Press and hold **Left Ctrl + Left Alt + S** to record, release to transcribe.
 
-*   **Push-to-Talk Transcription:** Press and hold **F3** to record, release to transcribe.
 *   **Automatic Typing:** Transcribed text is automatically typed into the active application using the `enigo` crate.
 *   **Local Processing:** Uses `whisper.cpp` (via the `whisper-rs` bindings) for on-device transcription.
 *   **GPU Acceleration:** Leverages GPU for faster transcription if `whisper.cpp` is compiled with CUDA/Metal support and a compatible GPU is available.
@@ -60,13 +60,13 @@ It's designed for quick, local voice dictation without relying on cloud services
     # On Windows
     .\target\release\WhisperHotkeyTyper-rs.exe
     ```
-2.  The application window will appear, showing the status "Idle. Press and hold F3 to record."
+2.  The application window will appear, showing the status "Idle. Press and hold Left Ctrl + Left Alt + S to record."
 3.  Click into the application where you want to type (e.g., a text editor, browser).
-4.  **Press and hold the `F3` key.** The status will change to "Recording...".
+4.  **Press and hold the `Left Ctrl + Left Alt + S` keys.** The status will change to "Recording...".
 5.  Speak clearly into your microphone.
-6.  **Release the `F3` key.** The status will change to "Processing..." and then "Transcribing...".
+6.  **Release the `Left Ctrl + Left Alt + S` keys.** The status will change to "Processing..." and then "Transcribing...".
 7.  Once transcription is complete, the text will be automatically typed into your active window. The GUI will also display the transcribed text.
-8.  The status will update to "Transcription complete. Press and hold F3 to record again."
+8.  The status will update to "Transcription complete. Press and hold Left Ctrl + Left Alt + S to record again."
 
 ## Configuration (In Code)
 
@@ -80,7 +80,7 @@ Currently, some settings are hardcoded in `src/main.rs`:
     ```rust
     params.set_language(Some("en")); // Set to your desired language code
     ```
-*   **Hotkey:** The F3 key is used via `device_query`. Modifying this requires changing the `Keycode::F3` check in the `hotkey_thread`.
+*   **Hotkey:** The Left Ctrl + Left Alt + S keys are used via `device_query`. Modifying this requires changing the `Keycode::LControl`, `Keycode::LAlt`, and `Keycode::S` checks in the `hotkey_thread`.
 
 ## Troubleshooting
 
@@ -91,7 +91,7 @@ Currently, some settings are hardcoded in `src/main.rs`:
     *   Ensure your microphone is connected and selected as the default input device in your system settings.
     *   Check `app.log` for more specific `cpal` errors.
 *   **Text not typing / typing in the wrong window:**
-    *   Make sure the desired target window is active and focused *before* you release the F3 key.
+    *   Make sure the desired target window is active and focused *before* you release the Left Ctrl + Left Alt + S keys.
     *   Some applications or system UI elements might not accept simulated input from `enigo` correctly.
 *   **Poor transcription quality:**
     *   Try a larger/better quality Whisper model.
