@@ -222,10 +222,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         log::info!("Whisper thread: Attempting to type out transcription...");
                         match Enigo::new(&Settings::default()) {
                             Ok(mut enigo) => {
-                                match enigo.text(&final_text) {
-                                    Ok(_) => log::info!("Whisper thread: Successfully typed transcription."),
-                                    Err(e) => log::error!("Whisper thread: Failed to type text: {}", e),
+                                // Type character by character with a small delay for terminal compatibility
+                                for ch in final_text.chars() {
+                                    match enigo.text(&ch.to_string()) {
+                                        Ok(_) => {
+                                            // Small delay between characters (1ms) for terminal compatibility
+                                            std::thread::sleep(Duration::from_millis(1));
+                                        },
+                                        Err(e) => {
+                                            log::error!("Whisper thread: Failed to type character '{}': {}", ch, e);
+                                            break;
+                                        }
+                                    }
                                 }
+                                log::info!("Whisper thread: Successfully typed transcription.");
                             }
                             Err(e) => {
                                 log::error!("Whisper thread: Failed to initialize enigo: {}", e);
