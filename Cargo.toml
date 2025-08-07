@@ -6,9 +6,7 @@ edition = "2021"
 [dependencies]
 # GUI
 eframe = "0.27.2"
-egui_plot = "0.27.2" 
-
-whisper-rs = { version = "0.14.2", features = ["cuda"] } # Use specific version and standard cuda feature
+egui_plot = "0.27.2"
 
 # Audio Input
 cpal = "0.15"
@@ -18,7 +16,7 @@ rubato = "0.14.1" # For resampling audio
 windows = { version = "0.56.0", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
-    "Win32_System_LibraryLoader", 
+    "Win32_System_LibraryLoader",
 ]}
 
 # Utilities
@@ -31,8 +29,15 @@ num_cpus = "1.16.0" # For setting thread counts
 # Input Simulation
 enigo = "0.2.0"
 log4rs = "1.2.0"
+device_query = "2.1.0"
+global-hotkey = "0.7.0"
 
-device_query = "2.1.0" 
+# Platform-specific features for whisper-rs
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.14.2", features = ["metal"], default-features = false }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = { version = "0.14.2", features = ["cuda"] }
 
 [build-dependencies]
 embed-resource = "2.4"

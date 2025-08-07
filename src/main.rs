@@ -6,7 +6,11 @@ use std::thread;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use device_query::{DeviceQuery, DeviceState, Keycode};
+#[cfg(target_os = "macos")]
+use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Code, Modifiers}};
+
+#[cfg(not(target_os = "macos"))]
+use device_query::{DeviceState, Keycode};
 
 use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
 use whisper_rs::{WhisperContext, FullParams, SamplingStrategy, WhisperContextParameters};
@@ -32,7 +36,7 @@ struct WhisperApp {
     is_recording: bool, 
     model_path: PathBuf,
     rx_from_others: Receiver<AppMessage>,
-    audio_control_tx: Arc<Mutex<Option<Sender<AudioControlMessage>>>>,
+    _audio_control_tx: Arc<Mutex<Option<Sender<AudioControlMessage>>>>,
 }
 
 #[derive(Debug)]
@@ -47,12 +51,12 @@ impl WhisperApp {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         Self {
-            status: "Idle. Press and hold Left Ctrl + Left Alt + S to record.".to_string(),
+            status: "Idle. Press and hold Ctrl + Alt + S to record.".to_string(),
             transcribed_text: "".to_string(),
             is_recording: false,
             model_path,
             rx_from_others,
-            audio_control_tx,
+            _audio_control_tx: audio_control_tx,
         }
     }
 
@@ -62,7 +66,7 @@ impl WhisperApp {
             match msg {
                 AppMessage::TranscriptionResult(text) => {
                     self.transcribed_text = text;
-                    self.status = "Transcription complete. Press and hold Left Ctrl + Left Alt + S to record again.".to_string();
+                    self.status = "Transcription complete. Press and hold Ctrl + Alt + S to record again.".to_string();
                     self.is_recording = false; 
                 }
                 AppMessage::StatusUpdate(status) => {
@@ -104,13 +108,17 @@ impl eframe::App for WhisperApp {
                 ui.label(self.transcribed_text.as_str());
             });
         });
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        ctx.request_repaint_after(Duration::from_millis(50));
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Configure File Logging ---
-    let log_path = "app.log";
+    // Determine log path relative to the executable
+    let mut exe_log_path = std::env::current_exe()?;
+    exe_log_path.pop(); // Remove the executable name, leaving the directory
+    let log_path = exe_log_path.join("app.log");
+
     // Log pattern: Date/Time [Level] [Target] Message
     let encoder = PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} [{l}] [{t}] - {m}{n}");
     let file_appender = FileAppender::builder()
@@ -119,22 +127,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to build file appender.");
     let config = Config::builder()
         .appender(Appender::builder().build("file", Box::new(file_appender)))
-        .build(Root::builder().appender("file").build(LevelFilter::Info)) // Set default log level (e.g., Info)
+        .build(Root::builder().appender("file").build(LevelFilter::Debug)) // Set default log level to Debug for troubleshooting
         .expect("Failed to build log config.");
     log4rs::init_config(config).expect("Failed to initialize logger.");
 
     log::info!("--- Application Starting ---"); // Add a start marker
 
-    let model_path_str = "./models/ggml-medium.en-q8_0.bin";
-    let model_path = PathBuf::from(model_path_str);
+    // Determine model path relative to the executable
+    let mut exe_path = std::env::current_exe()?;
+    exe_path.pop(); // Remove the executable name, leaving the directory
+    let model_path = exe_path.join("models/ggml-medium.en-q8_0.bin");
+
+    // log::info!("Looking for model at: {}", model_path.display()); // For debugging
 
     if !model_path.exists() {
         let current_dir = std::env::current_dir()?;
-        log::error!("Model file not found at: '{}'", model_path.file_name().unwrap_or_default().to_string_lossy());
+        log::error!("Model file not found at: '{}'", model_path.display());
         log::error!("Execution directory: '{}'", current_dir.display());
         log::error!("Please ensure the model is in a 'models' subfolder relative to the execution directory.");
         log::error!("Attempted full path: {}", std::fs::canonicalize(&model_path).unwrap_or_else(|_| model_path.clone()).display());
-        return Err(format!("Model file not found: {}", model_path_str).into());
+        return Err(format!("Model file not found: {}", model_path.display()).into());
     }
     log::info!("Using model: {}", model_path.display());
 
@@ -283,17 +295,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.channels() == 1 && // <-- Change to Mono
                 config.min_sample_rate() <= desired_sr &&
                 desired_sr <= config.max_sample_rate() &&
-                config.sample_format() == cpal::SampleFormat::I16 // Target i16
+                config.sample_format() == cpal::SampleFormat::F32 // Target F32
             });
 
         let config = match chosen_config_range {
             Some(config_range) => {
-                log::info!("Using supported 48kHz Mono i16 config: {:?}", config_range);
+                log::info!("Using supported 48kHz Mono F32 config: {:?}", config_range);
                 config_range.with_sample_rate(desired_sr).config()
             }
             None => {
-                log::error!("No supported 48kHz Mono i16 config found. Please check logs.");
-                let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Error: No suitable i16 audio config.".to_string()));
+                log::error!("No supported 48kHz Mono F32 config found. Please check logs.");
+                let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Error: No suitable F32 audio config.".to_string()));
                 return; 
             }
         };
@@ -323,23 +335,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let input_stream = match device.build_input_stream(
                         &config, 
-                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
                             if data.is_empty() {
                                 log::debug!("Audio callback: Received empty buffer");
                             } else {
-                                let min_val = data.iter().min().unwrap_or(&0);
-                                let max_val = data.iter().max().unwrap_or(&0);
-                                log::debug!("Audio callback: Received {} i16 samples, min={}, max={}", data.len(), min_val, max_val);
+                                let min_val = data.iter().cloned().fold(f32::INFINITY, f32::min);
+                                let max_val = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                                log::debug!("Audio callback: Received {} f32 samples, min={}, max={}", data.len(), min_val, max_val);
                             }
-                            // --- Convert i16 to f32 and store ---
-                            let mut f32_data = Vec::with_capacity(data.len());
-                            for &sample in data {
-                                let f_sample = sample as f32 / i16::MAX as f32;
-                                f32_data.push(f_sample);
-                            }
-                            
+                            // --- Store f32 data directly ---
                             if let Ok(mut buffer_lock) = buffer_for_callback.lock() {
-                                buffer_lock.extend_from_slice(&f32_data); // Store converted f32 data
+                                buffer_lock.extend_from_slice(data); // Store f32 data directly
                             } else { log::error!("Audio callback: Failed to lock audio buffer for writing."); }
                         },
                         move |err| {
@@ -434,7 +440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         log::warn!("Stop signal received but no active stream found.");
                          let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Ready. (No stream was active)".to_string()));
                     }
-                     let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Processing... Complete. Ready for next Left Ctrl + Left Alt + S.".to_string())); // Updated status
+                     let _ = tx_main_audio_clone.send(AppMessage::StatusUpdate("Processing... Complete. Ready for next Ctrl + Alt + S.".to_string())); // Updated status
                 }
                 Err(_) => {
                     log::info!("Audio control channel closed. Exiting audio thread.");
@@ -445,54 +451,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Audio thread finished.");
     })?;
 
-    // --- Spawn Hotkey Listener Thread using device_query ---
-    let tx_main_hotkey_clone = tx_main_thread.clone();
-    let audio_control_tx_hotkey_clone = Arc::clone(&shared_audio_control_tx);
-    thread::Builder::new().name("hotkey_thread".into()).spawn(move || {
-        log::info!("DeviceQuery Hotkey thread started.");
-        let device_state = DeviceState::new();
-        let mut last_hotkey_pressed = false;
-
-        loop {
-            let keys = device_state.query_keymap();
-            let lctrl_pressed = keys.contains(&Keycode::LControl);
-            let lalt_pressed = keys.contains(&Keycode::LAlt);
-            let s_pressed = keys.contains(&Keycode::S);
-            let hotkey_pressed = lctrl_pressed && lalt_pressed && s_pressed;
-
-            if hotkey_pressed && !last_hotkey_pressed {
-                log::info!("DeviceQuery: Left Ctrl + Left Alt + S Pressed");
-                if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
-                     if let Err(e) = tx.send(AudioControlMessage::StartRecording) {
-                         log::error!("DeviceQuery Hotkey thread: Failed to send StartRecording: {}", e);
-                         let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
-                     } else {
-                         let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Recording...".to_string()));
-                     }
-                 } else {
-                      log::error!("DeviceQuery Hotkey thread: Audio control channel unavailable for StartRecording.");
-                      let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
-                 }
-
-            } else if !hotkey_pressed && last_hotkey_pressed {
-                log::info!("DeviceQuery: Left Ctrl + Left Alt + S Released");
-                 if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
-                     if let Err(e) = tx.send(AudioControlMessage::StopAndProcess) {
-                         log::error!("DeviceQuery Hotkey thread: Failed to send StopAndProcess: {}", e);
-                         let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
-                         let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error sending stop command.".to_string()));
-                     } 
-                 } else {
-                      log::error!("DeviceQuery Hotkey thread: Audio control channel unavailable for StopAndProcess.");
-                      let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
-                 }
+    // --- Spawn Hotkey Listener Thread ---
+    #[cfg(target_os = "macos")]
+    {
+        let tx_main_hotkey_clone = tx_main_thread.clone();
+        let audio_control_tx_hotkey_clone = Arc::clone(&shared_audio_control_tx);
+        
+        thread::Builder::new().name("hotkey_thread".into()).spawn(move || {
+            log::info!("macOS Hotkey thread started (using global-hotkey).");
+            
+            // Create the hotkey manager
+            let manager = match GlobalHotKeyManager::new() {
+                Ok(m) => m,
+                Err(e) => {
+                    log::error!("Failed to create GlobalHotKeyManager: {}", e);
+                    let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Hotkey Error: {}", e)));
+                    return;
+                }
+            };
+            
+            // Register Control + Alt + S
+            let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
+            
+            if let Err(e) = manager.register(hotkey) {
+                log::error!("Failed to register hotkey: {}", e);
+                let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Failed to register hotkey: {}", e)));
+                return;
             }
+            
+            log::info!("Successfully registered Control + Alt + S hotkey");
+            
+            let mut is_recording = false;
+            
+            loop {
+                // Check for hotkey events
+                if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+                    log::info!("Hotkey event received: {:?}", event);
+                    
+                    if event.id == hotkey.id() {
+                        if !is_recording {
+                            // Start recording
+                            is_recording = true;
+                            log::info!("macOS: Control + Alt + S Pressed - Starting recording");
+                            
+                            if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
+                                if let Err(e) = tx.send(AudioControlMessage::StartRecording) {
+                                    log::error!("Failed to send StartRecording: {}", e);
+                                    let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
+                                } else {
+                                    let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Recording...".to_string()));
+                                }
+                            }
+                        } else {
+                            // Stop recording
+                            is_recording = false;
+                            log::info!("macOS: Control + Alt + S Pressed - Stopping recording");
+                            
+                            if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
+                                if let Err(e) = tx.send(AudioControlMessage::StopAndProcess) {
+                                    log::error!("Failed to send StopAndProcess: {}", e);
+                                    let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
+                                } else {
+                                    let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Processing...".to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })?;
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        let tx_main_hotkey_clone = tx_main_thread.clone();
+        let audio_control_tx_hotkey_clone = Arc::clone(&shared_audio_control_tx);
+        
+        thread::Builder::new().name("hotkey_thread".into()).spawn(move || {
+            log::info!("DeviceQuery Hotkey thread started.");
+            let device_state = DeviceState::new();
+            let mut last_hotkey_pressed = false;
 
-            last_hotkey_pressed = hotkey_pressed;
+            loop {
+                let keys = device_state.query_keymap();
+                // Check for Control + Alt + S (works better cross-platform)
+                let ctrl_pressed = keys.contains(&Keycode::LControl) || keys.contains(&Keycode::RControl);
+                let alt_pressed = keys.contains(&Keycode::LAlt) || keys.contains(&Keycode::RAlt);
+                let s_pressed = keys.contains(&Keycode::S);
+                let hotkey_pressed = ctrl_pressed && alt_pressed && s_pressed;
 
-            thread::sleep(Duration::from_millis(50)); // Check ~20 times per second
-        }
-    })?;
+                if hotkey_pressed && !last_hotkey_pressed {
+                    log::info!("DeviceQuery: Control + Alt + S Pressed"); 
+                    if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
+                         if let Err(e) = tx.send(AudioControlMessage::StartRecording) {
+                             log::error!("DeviceQuery Hotkey thread: Failed to send StartRecording: {}", e);
+                             let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error: {}", e)));
+                         } else {
+                             let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Recording...".to_string()));
+                         }
+                     } else {
+                          log::error!("DeviceQuery Hotkey thread: Audio control channel unavailable for StartRecording.");
+                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
+                     }
+
+                } else if !hotkey_pressed && last_hotkey_pressed {
+                    log::info!("DeviceQuery: Control + Alt + S Released"); 
+                     if let Some(tx) = audio_control_tx_hotkey_clone.lock().unwrap().as_ref() {
+                         if let Err(e) = tx.send(AudioControlMessage::StopAndProcess) {
+                             log::error!("DeviceQuery Hotkey thread: Failed to send StopAndProcess: {}", e);
+                             let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate(format!("Error sending stop command: {}", e)));
+                         } else {
+                             let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Processing Hotkey Release...".to_string()));
+                         }
+                     } else {
+                          log::error!("DeviceQuery Hotkey thread: Audio control channel unavailable for StopAndProcess.");
+                          let _ = tx_main_hotkey_clone.send(AppMessage::StatusUpdate("Error: Audio control unavailable".to_string()));
+                     }
+                }
+
+                last_hotkey_pressed = hotkey_pressed;
+
+                thread::sleep(Duration::from_millis(50)); // Check ~20 times per second
+            }
+        })?;
+    }
 
     log::info!("Starting GUI...");
     let native_options = eframe::NativeOptions {
